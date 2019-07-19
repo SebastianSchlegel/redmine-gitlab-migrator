@@ -158,7 +158,7 @@ class GitlabProject(Project):
         issue = self.api.post(
             issues_url, data=data, headers=headers)
 
-        issue_url = '{}/{}'.format(issues_url, issue['id'])
+        issue_url = '{}/{}'.format(issues_url, issue['iid'])
 
         # Handle issues notes
         issue_notes_url = '{}/notes'.format(issue_url, 'notes')
