@@ -9,6 +9,7 @@ from redmine_gitlab_migrator.converters import redmine_username_to_gitlab_userna
 
 log = logging.getLogger(__name__)
 
+
 class GitlabClient(APIClient):
     # see http://doc.gitlab.com/ce/api/#pagination
     MAX_PER_PAGE = 100
@@ -19,7 +20,7 @@ class GitlabClient(APIClient):
         kwargs['params']['per_page'] = self.MAX_PER_PAGE
 
         result = super().get(*args, **kwargs)
-        while (len(result) > 0 and len(result) % self.MAX_PER_PAGE == 0):
+        while len(result) > 0 and len(result) % self.MAX_PER_PAGE == 0:
             kwargs['params']['page'] += 1
             result.extend(super().get(*args, **kwargs))
         return result
@@ -47,7 +48,6 @@ class GitlabInstance:
     def get_group_members(self, group_id):
         return self.api.get('{}/groups/{}/members'.format(self.url, group_id))
 
-
     def check_users_exist(self, usernames):
         """ Returns True if all users exist
         """
@@ -68,7 +68,7 @@ class GitlabProject(Project):
         super().__init__(*args, **kwargs)
         self.group_id = None
 
-        self.instance_url = '{}/api/v3'.format(
+        self.instance_url = '{}/api/v4'.format(
             self._url_match.group('base_url'))
 
         # fetch project_id via api, thanks to lewicki-pk
@@ -80,7 +80,9 @@ class GitlabProject(Project):
         projectId = -1
         groupId = None
 
-        projects_info = self.api.get('{}/projects'.format(self.instance_url))
+        projects_info = self.api.get(
+            '{}/projects?search={}&membership=yes'.format(self.instance_url,
+                                                          self._url_match.groupdict()['project_name']))
 
         for project_attributes in projects_info:
             if project_attributes.get('path_with_namespace') == path_with_namespace:
@@ -89,15 +91,14 @@ class GitlabProject(Project):
                     groupId = project_attributes.get('namespace').get('id')
 
         self.project_id = projectId
-        if projectId == -1 :
+        if projectId == -1:
             raise ValueError('Could not get project_id for path_with_namespace: {}'.format(path_with_namespace))
         if groupId:
             self.group_id = groupId
 
         self.api_url = (
-            '{base_url}api/v3/projects/'.format(
-                **self._url_match.groupdict())) + str(projectId)
-
+                           '{base_url}api/v4/projects/'.format(
+                               **self._url_match.groupdict())) + str(projectId)
 
     def is_repository_empty(self):
         """ Heuristic to check if repository is empty
@@ -110,24 +111,24 @@ class GitlabProject(Project):
         l = []
         for u in uploads:
 
-           log.info('\tuploading {} ({} / {})'.format(u['filename'], u['content_url'], u['content_type']))
+            log.info('\tuploading {} ({} / {})'.format(u['filename'], u['content_url'], u['content_type']))
 
-           # http://docs.python-requests.org/en/latest/user/quickstart/#post-a-multipart-encoded-file
-           # http://stackoverflow.com/questions/20830551/how-to-streaming-upload-with-python-requests-module-include-file-and-data
-           files = [("file", (u['filename'], urlopen(u['content_url']), u['content_type']))]
+            # http://docs.python-requests.org/en/latest/user/quickstart/#post-a-multipart-encoded-file
+            # http://stackoverflow.com/questions/20830551/how-to-streaming-upload-with-python-requests-module-include-file-and-data
+            files = [("file", (u['filename'], urlopen(u['content_url']), u['content_type']))]
 
-           try:
-               upload = self.api.post(
-                   uploads_url, files=files)
-           except requests.exceptions.HTTPError:
-               # gitlab might throw an "ArgumentError (invalid byte sequence in UTF-8)" in production.log
-               # if the filename contains special chars like german "umlaute"
-               # in that case we retry with an ascii only filename.
-               files = [("file", (self.remove_non_ascii(u['filename']), urlopen(u['content_url']), u['content_type']))]
-               upload = self.api.post(
-                   uploads_url, files=files)
+            try:
+                upload = self.api.post(
+                    uploads_url, files=files)
+            except requests.exceptions.HTTPError:
+                # gitlab might throw an "ArgumentError (invalid byte sequence in UTF-8)" in production.log
+                # if the filename contains special chars like german "umlaute"
+                # in that case we retry with an ascii only filename.
+                files = [("file", (self.remove_non_ascii(u['filename']), urlopen(u['content_url']), u['content_type']))]
+                upload = self.api.post(
+                    uploads_url, files=files)
 
-           l.append('{} {}'.format(upload['markdown'], u['description']))
+            l.append('{} {}'.format(upload['markdown'], u['description']))
 
         return "\n  * ".join(l)
 
@@ -148,7 +149,7 @@ class GitlabProject(Project):
         # see: https://docs.gitlab.com/ce/api/projects.html#upload-a-file
         uploads_text = self.uploads_to_string(meta['uploads'])
         if len(uploads_text) > 0:
-           data['description'] = "{}\n* Uploads:\n  * {}".format(data['description'], uploads_text)
+            data['description'] = "{}\n* Uploads:\n  * {}".format(data['description'], uploads_text)
 
         headers = {}
         if 'sudo_user' in meta:
@@ -194,7 +195,7 @@ class GitlabProject(Project):
         except ValueError:
             milestone = self.api.post(milestones_url, data=data)
 
-        if (meta['must_close'] and milestone['state'] != 'closed'):
+        if meta['must_close'] and milestone['state'] != 'closed':
             milestone_url = '{}/{}'.format(milestones_url, milestone['id'])
             altered_milestone = milestone.copy()
             altered_milestone['state_event'] = 'close'
@@ -252,4 +253,3 @@ class GitlabProject(Project):
         """ Return a GitlabInstance
         """
         return GitlabInstance(self.instance_url, self.api)
-
